@@ -3,6 +3,7 @@ package httpver
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -10,6 +11,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/quic-go/quic-go/http3"
@@ -22,7 +24,8 @@ const (
 	h3Timeout = 3 * time.Second
 )
 
-// normalizeURL ensures the input has a scheme and host and defaults to https.
+// normalizeURL ensures the input has a scheme and a syntactically valid host and
+// defaults to https.
 func normalizeURL(raw string) (string, error) {
 	if !strings.HasPrefix(raw, "http://") && !strings.HasPrefix(raw, "https://") {
 		raw = "https://" + raw
@@ -37,7 +40,84 @@ func normalizeURL(raw string) (string, error) {
 	if u.Host == "" {
 		return "", fmt.Errorf("missing host in URL")
 	}
+
+	// Basic hostname validation so inputs like `floqast.app">AAAA` are rejected
+	// before we attempt any network activity.
+	host := u.Hostname()
+	if host == "" {
+		return "", fmt.Errorf("missing host in URL")
+	}
+
+	// Explicitly disallow localhost; this scanner is intended for network-visible hosts.
+	if strings.EqualFold(host, "localhost") {
+		return "", fmt.Errorf("localhost is not allowed as a scan target")
+	}
+
+	// Allow bare IPs (IPv4/IPv6).
+	if net.ParseIP(host) == nil {
+		if !isValidHostname(host) {
+			return "", fmt.Errorf("invalid domain name in URL")
+		}
+	}
+
 	return u.String(), nil
+}
+
+// isValidHostname performs a conservative validation of a DNS hostname.
+// It is not intended to be exhaustive, just to reject clearly invalid and
+// potentially dangerous inputs.
+func isValidHostname(host string) bool {
+	if host == "" || len(host) > 253 {
+		return false
+	}
+
+	// Strip trailing dot (FQDN) if present.
+	if strings.HasSuffix(host, ".") {
+		host = strings.TrimSuffix(host, ".")
+	}
+
+	labels := strings.Split(host, ".")
+	if len(labels) == 0 {
+		return false
+	}
+
+	for _, label := range labels {
+		if label == "" || len(label) > 63 {
+			return false
+		}
+		// Labels must not start or end with a hyphen.
+		if label[0] == '-' || label[len(label)-1] == '-' {
+			return false
+		}
+		for _, r := range label {
+			if (r >= 'a' && r <= 'z') ||
+				(r >= 'A' && r <= 'Z') ||
+				(r >= '0' && r <= '9') ||
+				r == '-' {
+				continue
+			}
+			return false
+		}
+	}
+	return true
+}
+
+// formatHTTP10Error produces a friendlier description for HTTP/1.0 probe
+// failures. In particular, a plain TCP "connection refused" on port 80 is
+// treated as a *good* outcome for security (legacy HTTP/1.0 surface is not
+// exposed).
+func formatHTTP10Error(err error) string {
+	var opErr *net.OpError
+	if errors.As(err, &opErr) {
+		if errors.Is(opErr.Err, syscall.ECONNREFUSED) {
+			return "not supported (good) - TCP connection refused"
+		}
+	}
+	// Fallback heuristic if the platform error type is different.
+	if strings.Contains(strings.ToLower(err.Error()), "connection refused") {
+		return "not supported (good) - TCP connection refused"
+	}
+	return fmt.Sprintf("not supported (or probe failed): %v", err)
 }
 
 // VersionResult captures the outcome for a single HTTP version.
@@ -45,7 +125,11 @@ type VersionResult struct {
 	Version   string `json:"version"`
 	Supported bool   `json:"supported"`
 	Detail    string `json:"detail,omitempty"`
-	Error     bool   `json:"error,omitempty"`
+	// Evidence contains low-level error or protocol details supporting the
+	// finding. This is intended for tooltips / advanced users, while Detail
+	// stays relatively human-friendly.
+	Evidence string `json:"evidence,omitempty"`
+	Error    bool   `json:"error,omitempty"`
 }
 
 // CheckResult is the full structured result for a run.
@@ -58,6 +142,11 @@ type CheckResult struct {
 	Grade      string          `json:"grade"`
 	ALPN       string          `json:"alpn,omitempty"`
 	TLSVersion string          `json:"tls_version,omitempty"`
+	// Unresolved is set when the target hostname does not resolve via DNS
+	// (e.g. NXDOMAIN / "no such host"). This allows callers (like the web UI)
+	// to surface a clear "host does not resolve" message instead of a generic
+	// probe failure.
+	Unresolved bool `json:"unresolved,omitempty"`
 }
 
 // statusEmoji maps a VersionResult to a simple emoji for quick visual scanning.
@@ -189,6 +278,17 @@ func runChecks(target string, overridePort string) CheckResult {
 	var hasH2, hasH3 bool
 	var tlsProto, alpn string
 	var wg sync.WaitGroup
+	var unresolved bool
+	var unresolvedMu sync.Mutex
+
+	markIfUnresolved := func(err error) {
+		var dnsErr *net.DNSError
+		if errors.As(err, &dnsErr) && dnsErr != nil && dnsErr.IsNotFound {
+			unresolvedMu.Lock()
+			unresolved = true
+			unresolvedMu.Unlock()
+		}
+	}
 	wg.Add(4)
 
 	// 1) HTTP/1.0
@@ -199,6 +299,7 @@ func runChecks(target string, overridePort string) CheckResult {
 		if err != nil {
 			v10.Error = true
 			v10.Detail = "request build failed"
+			v10.Evidence = err.Error()
 		} else {
 			req10.Proto = "HTTP/1.0"
 			req10.ProtoMajor = 1
@@ -207,7 +308,9 @@ func runChecks(target string, overridePort string) CheckResult {
 			resp10, err := h1Client.Do(req10)
 			if err != nil {
 				v10.Error = true
-				v10.Detail = fmt.Sprintf("not supported (or probe failed): %v", err)
+				v10.Evidence = err.Error()
+				v10.Detail = formatHTTP10Error(err)
+				markIfUnresolved(err)
 			} else {
 				defer resp10.Body.Close()
 				// If the server speaks any HTTP/1.x in response to a 1.0 request,
@@ -217,7 +320,9 @@ func runChecks(target string, overridePort string) CheckResult {
 					if resp10.ProtoMinor == 0 {
 						v10.Detail = "supported"
 					} else {
-						v10.Detail = fmt.Sprintf("replied with %s", resp10.Proto)
+						// Many servers upgrade HTTP/1.0 requests to HTTP/1.1. Make that
+						// explicit so it reads as a positive signal instead of a warning.
+						v10.Detail = fmt.Sprintf("server upgraded HTTP/1.0 request to %s (good)", resp10.Proto)
 					}
 				} else {
 					v10.Detail = fmt.Sprintf("server replied with %s", resp10.Proto)
@@ -235,6 +340,7 @@ func runChecks(target string, overridePort string) CheckResult {
 		if err != nil {
 			v11.Error = true
 			v11.Detail = "request build failed"
+			v11.Evidence = err.Error()
 		} else {
 			req11.Proto = "HTTP/1.1"
 			req11.ProtoMajor = 1
@@ -243,7 +349,9 @@ func runChecks(target string, overridePort string) CheckResult {
 			resp11, err := h1Client.Do(req11)
 			if err != nil {
 				v11.Error = true
+				v11.Evidence = err.Error()
 				v11.Detail = fmt.Sprintf("not supported (or probe failed): %v", err)
+				markIfUnresolved(err)
 			} else {
 				defer resp11.Body.Close()
 				if resp11.ProtoMajor == 1 && resp11.ProtoMinor == 1 {
@@ -264,7 +372,9 @@ func runChecks(target string, overridePort string) CheckResult {
 		resp2, err := h2Client.Get(urlWithPort)
 		if err != nil {
 			v2.Error = true
+			v2.Evidence = err.Error()
 			v2.Detail = fmt.Sprintf("not supported (or probe failed): %v", err)
+			markIfUnresolved(err)
 		} else {
 			defer resp2.Body.Close()
 			cs := resp2.TLS
@@ -303,6 +413,7 @@ func runChecks(target string, overridePort string) CheckResult {
 			// Building the request itself failed: treat as a hard error.
 			v3.Error = true
 			v3.Detail = "request build failed"
+			v3.Evidence = err.Error()
 		} else {
 			ctx3, cancel3 := context.WithTimeout(context.Background(), h3Timeout)
 			defer cancel3()
@@ -310,10 +421,12 @@ func runChecks(target string, overridePort string) CheckResult {
 
 			resp3, err := h3Client.Do(req3)
 			if err != nil {
-				// In practice, many sites simply don't support HTTP/3 yet, so
-				// QUIC/timeouts are treated as a normal \"not supported\" case
-				// (❌) instead of an error (🟧).
-				v3.Detail = fmt.Sprintf("not supported (or probe failed): %v", err)
+				// In practice, many sites simply don't support HTTP/3 yet. Rather than
+				// surfacing low-level QUIC/timeout errors, present a user-friendly hint
+				// that HTTP/3 is not available but would be a security improvement.
+				v3.Detail = "not supported – enable HTTP/3 to offer a more secure option."
+				v3.Evidence = err.Error()
+				markIfUnresolved(err)
 			} else {
 				defer resp3.Body.Close()
 				if resp3.ProtoMajor == 3 {
@@ -330,6 +443,11 @@ func runChecks(target string, overridePort string) CheckResult {
 
 	wg.Wait()
 	res.Results = results
+
+	// If none of the probes could resolve the hostname, flag it.
+	if unresolved {
+		res.Unresolved = true
+	}
 
 	// Compute minimalist grade/score based solely on h2/h3 and TLS version.
 	score, grade := computeMinimalGrade(hasH3, hasH2, tlsProto)

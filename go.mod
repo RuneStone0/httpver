@@ -1,4 +1,4 @@
-module check_http_versions
+module http1.dev
 
 go 1.24
 
