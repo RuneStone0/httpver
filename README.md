@@ -1,2 +1,70 @@
 # check_http_versions
-Python script that checks HTTP/1.1, HTTP/2, and HTTP/3 support for any URL
+
+Go-based CLI tool (`httpver`) that checks HTTP/1.0, HTTP/1.1, HTTP/2.0, and HTTP/3.0 support for one or more hosts/URLs.
+
+## Install & build
+
+```bash
+git clone https://github.com/your-user/check_http_versions.git
+cd check_http_versions
+
+# Build the httpver binary
+go build -o httpver ./cmd/httpver
+```
+
+Optionally put `httpver` somewhere on your `PATH` (e.g. `~/bin` or `$GOBIN`).
+
+## Usage
+
+```bash
+httpver [-port N] [--json] [--targets a.com,b.com] [--targets-file targets.txt] <domain-or-url> ...
+httpver --web [--listen :8080]
+```
+
+**Examples**
+
+```bash
+httpver cloudflare.com
+httpver https://example.com
+httpver -port 8080 localhost
+httpver --json cloudflare.com
+httpver --targets cloudflare.com,example.com --json
+httpver --targets-file targets.txt --json
+httpver cloudflare.com google.com floqast.app httpforever.com neverssl.com oldweb.today microsoft.com tesla.com nvidia.com amazon.com
+httpver --web --listen :8080
+```
+
+The tool will:
+
+- Normalize each input to a proper URL (defaulting to `https://`).
+- Decide a default port per target (443 for HTTPS, 80 for HTTP) unless overridden with `-port`.
+- Print which TCP/UDP port is being tested for each target.
+- Attempt HTTP/1.0, HTTP/1.1, HTTP/2.0, and HTTP/3.0 connections in that order and report support for each.
+- Run checks in parallel across both HTTP versions and multiple targets to keep scans fast.
+
+### Web interface
+
+When run with `--web`, `httpver` starts a small HTTP server that serves a browser-based UI:
+
+- Visit `http://localhost:8080/` (or your chosen `--listen` address).
+- Enter up to 5 domains or URLs, separated by commas.
+- Results are shareable via links like `/?t=google.com` or `/?t=example.com,cloudflare.com`.
+- Scan results are cached in-memory for 4 hours to avoid re-scanning the same targets too frequently.
+
+The service is inspired in part by the HTTP/1.1 security concerns documented at [`https://http1mustdie.com/`](https://http1mustdie.com/), and aims to make it easy and quick to see if you are supporting modern HTTP versions like HTTP/3—similar to how `ssllabs.com` has long helped promote upgrading SSL/TLS.
+
+### Output format
+
+- For **both single and multiple targets**, `httpver` prints one summary line per host as results become available:
+
+  ```text
+  HTTP/1.0 ❌ | HTTP/1.1 ✅ | HTTP/2.0 ✅ | HTTP/3.0 ✅    cloudflare.com:443
+  HTTP/1.0 ❌ | HTTP/1.1 ✅ | HTTP/2.0 ❌ | HTTP/3.0 ⚠️    example.org:443
+  ```
+
+- Emoji legend:
+  - ✅: protocol clearly supported
+  - ❌: protocol not supported (clean failure/other version chosen)
+  - ⚠️: error or probe failed (timeout, TLS/QUIC error, etc.)
+
+- HTTP/1.0 is probed over plain HTTP on port 80 by default (or the `-port` override), and any HTTP/1.x response (1.0 or 1.1) is treated as HTTP/1.0 support. Other versions are probed over HTTPS/QUIC on the chosen port.
