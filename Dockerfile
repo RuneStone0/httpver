@@ -31,6 +31,8 @@ WORKDIR /app
 RUN apk add --no-cache ca-certificates wget
 
 COPY --from=builder /http1 /usr/local/bin/http1
+# Copy HTML templates needed by the web UI
+COPY --from=builder /app/cmd/http1/templates /app/cmd/http1/templates
 
 # Default to web mode on 8080 for convenience; override with args if desired.
 EXPOSE 8080
