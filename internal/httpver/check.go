@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/quic-go/quic-go/http3"
+	"golang.org/x/net/http2"
 )
 
 const (
@@ -49,10 +50,14 @@ type VersionResult struct {
 
 // CheckResult is the full structured result for a run.
 type CheckResult struct {
-	Target  string          `json:"target"`
-	URL     string          `json:"url"`
-	Port    string          `json:"port"`
-	Results []VersionResult `json:"results"`
+	Target     string          `json:"target"`
+	URL        string          `json:"url"`
+	Port       string          `json:"port"`
+	Results    []VersionResult `json:"results"`
+	Score      int             `json:"score"`
+	Grade      string          `json:"grade"`
+	ALPN       string          `json:"alpn,omitempty"`
+	TLSVersion string          `json:"tls_version,omitempty"`
 }
 
 // statusEmoji maps a VersionResult to a simple emoji for quick visual scanning.
@@ -136,20 +141,32 @@ func runChecks(target string, overridePort string) CheckResult {
 	}
 
 	// Shared TLS config and clients per target.
-	baseTLS := &tls.Config{InsecureSkipVerify: true}
+	// We use separate TLS configs for HTTP/1.x and HTTP/2 so that HTTP/1.x
+	// probes never accidentally negotiate HTTP/2 via ALPN (which would cause
+	// "malformed HTTP response" errors when parsed as HTTP/1.x).
+	baseTLS := &tls.Config{
+		InsecureSkipVerify: true,
+	}
 
+	h1TLS := *baseTLS
+	h1TLS.NextProtos = []string{"http/1.1"}
 	h1Transport := &http.Transport{
 		ForceAttemptHTTP2: false,
-		TLSClientConfig:   baseTLS,
+		TLSClientConfig:   &h1TLS,
 	}
 	h1Client := &http.Client{
 		Timeout:   h1Timeout,
 		Transport: h1Transport,
 	}
 
+	h2TLS := *baseTLS
+	h2TLS.NextProtos = []string{"h2", "http/1.1"}
 	h2Transport := &http.Transport{
-		TLSClientConfig: baseTLS,
+		TLSClientConfig: &h2TLS,
 	}
+	// Enable HTTP/2 on this transport so that when servers speak h2 via ALPN
+	// we parse the response correctly as HTTP/2 instead of HTTP/1.x.
+	_ = http2.ConfigureTransport(h2Transport)
 	h2Client := &http.Client{
 		Timeout:   h2Timeout,
 		Transport: h2Transport,
@@ -169,6 +186,8 @@ func runChecks(target string, overridePort string) CheckResult {
 	}
 
 	results := make([]VersionResult, 4)
+	var hasH2, hasH3 bool
+	var tlsProto, alpn string
 	var wg sync.WaitGroup
 	wg.Add(4)
 
@@ -248,9 +267,26 @@ func runChecks(target string, overridePort string) CheckResult {
 			v2.Detail = fmt.Sprintf("not supported (or probe failed): %v", err)
 		} else {
 			defer resp2.Body.Close()
+			cs := resp2.TLS
+			if cs != nil {
+				switch cs.Version {
+				case tls.VersionTLS13:
+					tlsProto = "TLS 1.3"
+				case tls.VersionTLS12:
+					tlsProto = "TLS 1.2"
+				case tls.VersionTLS11:
+					tlsProto = "TLS 1.1"
+				case tls.VersionTLS10:
+					tlsProto = "TLS 1.0"
+				default:
+					tlsProto = ""
+				}
+				alpn = cs.NegotiatedProtocol
+			}
 			if resp2.ProtoMajor == 2 {
 				v2.Supported = true
 				v2.Detail = "supported"
+				hasH2 = true
 			} else {
 				v2.Detail = fmt.Sprintf("server replied with %s", resp2.Proto)
 			}
@@ -283,6 +319,7 @@ func runChecks(target string, overridePort string) CheckResult {
 				if resp3.ProtoMajor == 3 {
 					v3.Supported = true
 					v3.Detail = "supported"
+					hasH3 = true
 				} else {
 					v3.Detail = fmt.Sprintf("server replied with %s", resp3.Proto)
 				}
@@ -293,6 +330,13 @@ func runChecks(target string, overridePort string) CheckResult {
 
 	wg.Wait()
 	res.Results = results
+
+	// Compute minimalist grade/score based solely on h2/h3 and TLS version.
+	score, grade := computeMinimalGrade(hasH3, hasH2, tlsProto)
+	res.Score = score
+	res.Grade = grade
+	res.ALPN = alpn
+	res.TLSVersion = tlsProto
 	return res
 }
 
@@ -308,7 +352,11 @@ func CheckHTTPVersions(target string, overridePort string) {
 		}
 		fmt.Fprintf(&b, "%s %s", vr.Version, statusEmoji(vr))
 	}
-	fmt.Printf("%s\t%s:%s\n", b.String(), res.Target, res.Port)
+	if res.Grade != "" {
+		fmt.Printf("%s\tGrade: %s (%d)\t%s:%s\n", b.String(), res.Grade, res.Score, res.Target, res.Port)
+	} else {
+		fmt.Printf("%s\t%s:%s\n", b.String(), res.Target, res.Port)
+	}
 }
 
 // CheckHTTPVersionsJSON runs the checks and returns a structured result suitable for JSON encoding.
@@ -399,7 +447,11 @@ func CheckHTTPVersionsMulti(targets []string, overridePort string) {
 			}
 			fmt.Fprintf(&b, "%s %s", vr.Version, statusEmoji(vr))
 		}
-		fmt.Printf("%s\t%s:%s\n", b.String(), res.Target, res.Port)
+		if res.Grade != "" {
+			fmt.Printf("%s\tGrade: %s (%d)\t%s:%s\n", b.String(), res.Grade, res.Score, res.Target, res.Port)
+		} else {
+			fmt.Printf("%s\t%s:%s\n", b.String(), res.Target, res.Port)
+		}
 	}
 }
 

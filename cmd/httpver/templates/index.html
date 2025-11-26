@@ -1,0 +1,849 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>httpver - HTTP version checker</title>
+  <style>
+    body {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      margin: 0;
+      padding: 0;
+      background: #0f172a;
+      color: #e5e7eb;
+      /* Prevent horizontal layout shift when some pages scroll and others don't */
+      overflow-y: scroll;
+      scrollbar-gutter: stable both-edges;
+    }
+    .container {
+      max-width: 960px;
+      margin: 0 auto;
+      padding: 2rem 1.5rem 3rem;
+      position: relative;
+    }
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+      margin-bottom: 1.75rem;
+    }
+    .header-actions {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    .main-nav {
+      display: flex;
+      gap: 0.9rem;
+      font-size: 0.8rem;
+      margin-bottom: 1.25rem;
+    }
+    .main-nav a {
+      color: #9ca3af;
+      text-decoration: none;
+      padding: 0.15rem 0.4rem;
+      border-radius: 999px;
+      border: 1px solid transparent;
+    }
+    .main-nav a:hover {
+      color: #e5e7eb;
+      border-color: rgba(148, 163, 184, 0.6);
+      background: rgba(15, 23, 42, 0.8);
+    }
+    .main-nav a.nav-active {
+      color: #0f172a;
+      background: linear-gradient(135deg, #38bdf8, #22c55e);
+      border-color: transparent;
+    }
+    .menu-toggle {
+      width: 32px;
+      height: 32px;
+      border-radius: 999px;
+      border: 1px solid rgba(148, 163, 184, 0.5);
+      background: rgba(15, 23, 42, 0.95);
+      display: none; /* hidden on large screens */
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 3px;
+      cursor: pointer;
+      padding: 0;
+    }
+    .menu-toggle span {
+      display: block;
+      width: 14px;
+      height: 2px;
+      border-radius: 999px;
+      background: #e5e7eb;
+    }
+    .menu-toggle.open {
+      border-color: #38bdf8;
+      box-shadow: 0 0 0 1px rgba(56, 189, 248, 0.5);
+    }
+    .menu-panel {
+      position: absolute;
+      top: 3.4rem;
+      right: 1.4rem;
+      min-width: 160px;
+      background: rgba(15, 23, 42, 0.98);
+      border-radius: 0.75rem;
+      border: 1px solid rgba(31, 41, 55, 0.95);
+      box-shadow: 0 18px 35px -20px rgba(15, 23, 42, 0.9);
+      padding: 0.4rem 0.35rem;
+      display: none;
+      z-index: 30;
+    }
+    .menu-panel.open {
+      display: block;
+    }
+    .menu-panel a {
+      display: block;
+      padding: 0.35rem 0.6rem;
+      font-size: 0.8rem;
+      color: #e5e7eb;
+      text-decoration: none;
+      border-radius: 0.5rem;
+    }
+    .menu-panel a:hover {
+      background: rgba(37, 99, 235, 0.6);
+    }
+    .menu-panel a.nav-active {
+      background: rgba(37, 99, 235, 0.9);
+      font-weight: 500;
+    }
+    /* Responsive navigation: show burger on small screens, full nav on larger */
+    @media (max-width: 640px) {
+      .main-nav {
+        display: none;
+      }
+      .menu-toggle {
+        display: inline-flex;
+      }
+    }
+    .brand {
+      display: flex;
+      flex-direction: column;
+      gap: 0.25rem;
+    }
+    h1 {
+      font-size: 2rem;
+      margin: 0;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+    }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.25rem;
+      font-size: 0.7rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      padding: 0.15rem 0.55rem;
+      border-radius: 999px;
+      border: 1px solid rgba(148, 163, 184, 0.5);
+      color: #e5e7eb;
+      background: radial-gradient(circle at top left, rgba(56, 189, 248, 0.15), transparent 55%);
+    }
+    p.lead {
+      color: #9ca3af;
+      margin: 0;
+      font-size: 0.9rem;
+    }
+    .card {
+      background: rgba(15, 23, 42, 0.9);
+      border: 1px solid rgba(148, 163, 184, 0.2);
+      border-radius: 0.75rem;
+      padding: 1.5rem;
+      box-shadow: 0 25px 35px -15px rgba(15, 23, 42, 0.8);
+      backdrop-filter: blur(12px);
+    }
+    label {
+      display: block;
+      font-weight: 500;
+      margin-bottom: 0.35rem;
+    }
+    input[type="text"] {
+      width: 100%;
+      padding: 0.65rem 0.8rem;
+      border-radius: 0.5rem;
+      border: 1px solid rgba(148, 163, 184, 0.6);
+      background: rgba(15, 23, 42, 0.9);
+      color: #e5e7eb;
+      font-size: 0.95rem;
+      box-sizing: border-box;
+    }
+    input[type="text"]:focus {
+      outline: none;
+      border-color: #38bdf8;
+      box-shadow: 0 0 0 1px rgba(56, 189, 248, 0.4);
+    }
+    .help-text {
+      font-size: 0.8rem;
+      color: #9ca3af;
+      margin-top: 0.25rem;
+    }
+    .inline-option {
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+      margin-top: 0.5rem;
+      font-size: 0.8rem;
+      color: #9ca3af;
+    }
+    .inline-option input[type="checkbox"] {
+      width: 14px;
+      height: 14px;
+      accent-color: #38bdf8;
+    }
+    .form-row {
+      margin-top: 0.35rem;
+      display: flex;
+      gap: 0.6rem;
+      align-items: stretch;
+    }
+    .form-row input[type="text"] {
+      flex: 1 1 auto;
+    }
+    .actions {
+      margin-top: 0.6rem;
+      display: flex;
+      gap: 0.75rem;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    .icon-link {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 36px;
+      height: 36px;
+      border-radius: 999px;
+      border: 1px solid rgba(148, 163, 184, 0.4);
+      background: radial-gradient(circle at top left, rgba(148, 163, 184, 0.15), rgba(15, 23, 42, 0.95));
+      color: inherit;
+      text-decoration: none;
+      transition: background 0.15s ease, transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
+    }
+    .icon-link svg {
+      width: 18px;
+      height: 18px;
+      fill: currentColor;
+    }
+    .icon-link:hover {
+      border-color: #38bdf8;
+      background: radial-gradient(circle at top left, rgba(56, 189, 248, 0.25), rgba(15, 23, 42, 0.95));
+      box-shadow: 0 14px 30px -18px rgba(59, 130, 246, 0.85);
+      transform: translateY(-1px);
+    }
+    button, .btn {
+      border: none;
+      border-radius: 999px;
+      padding: 0.55rem 1.2rem;
+      font-size: 0.9rem;
+      font-weight: 500;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      text-decoration: none;
+    }
+    button.primary, .btn.primary {
+      background: linear-gradient(135deg, #38bdf8, #22c55e);
+      color: #0f172a;
+    }
+    button.primary:hover, .btn.primary:hover {
+      filter: brightness(1.05);
+    }
+    .hint {
+      font-size: 0.8rem;
+      color: #9ca3af;
+    }
+    .error {
+      margin-top: 1rem;
+      padding: 0.75rem 0.9rem;
+      border-radius: 0.5rem;
+      border: 1px solid rgba(248, 113, 113, 0.6);
+      background: rgba(127, 29, 29, 0.8);
+      color: #fee2e2;
+      font-size: 0.85rem;
+    }
+    .results {
+      margin-top: 2rem;
+    }
+    .target-card {
+      margin-bottom: 1.25rem;
+      padding: 1rem 1rem 0.9rem;
+      border-radius: 0.75rem;
+      border: 1px solid rgba(148, 163, 184, 0.35);
+      background: radial-gradient(circle at top left, rgba(56, 189, 248, 0.15), transparent 55%), rgba(15, 23, 42, 0.9);
+    }
+    .target-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      gap: 0.75rem;
+      margin-bottom: 0.75rem;
+    }
+    .target-main {
+      font-weight: 600;
+      font-size: 1rem;
+    }
+    .target-main a {
+      color: inherit;
+      text-decoration: none;
+    }
+    .target-main a:hover {
+      text-decoration: underline;
+    }
+    .target-sub {
+      font-size: 0.8rem;
+      color: #9ca3af;
+    }
+    .grade-badge {
+      font-size: 0.7rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      padding: 0.15rem 0.6rem;
+      border-radius: 999px;
+      border: 1px solid rgba(148, 163, 184, 0.6);
+      white-space: nowrap;
+    }
+    .grade-badge.grade-fail {
+      border-color: rgba(248, 113, 113, 0.9);
+      color: #fecaca;
+      background: rgba(127, 29, 29, 0.9);
+    }
+    .grade-badge.grade-pass {
+      border-color: rgba(52, 211, 153, 0.9);
+      color: #bbf7d0;
+      background: rgba(6, 78, 59, 0.9);
+    }
+    .grade-badge.grade-fantastic {
+      border-color: rgba(34, 197, 94, 0.95);
+      color: #dcfce7;
+      background: linear-gradient(135deg, rgba(22, 163, 74, 0.9), rgba(34, 197, 94, 0.9));
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.85rem;
+      margin-top: 0.35rem;
+    }
+    th, td {
+      padding: 0.4rem 0.3rem;
+      text-align: left;
+    }
+    th {
+      font-weight: 500;
+      color: #9ca3af;
+      border-bottom: 1px solid rgba(148, 163, 184, 0.4);
+    }
+    tr + tr td {
+      border-top: 1px solid rgba(15, 23, 42, 0.9);
+    }
+    .version {
+      white-space: nowrap;
+      width: 0;
+    }
+    .status {
+      width: 0;
+      white-space: nowrap;
+    }
+    .detail {
+      color: #d1d5db;
+    }
+    .footer {
+      margin-top: 2.5rem;
+      font-size: 0.8rem;
+      color: #6b7280;
+    }
+    .footer a {
+      color: #93c5fd;
+      text-decoration: none;
+    }
+    .footer a:hover {
+      text-decoration: underline;
+    }
+    .info-section {
+      margin-top: 2.5rem;
+      font-size: 1rem;
+      color: #e5e7eb;
+      line-height: 1.7;
+      max-width: 70ch;
+    }
+    .info-section h2 {
+      font-size: 1.15rem;
+      margin: 0 0 0.75rem;
+      color: #e5e7eb;
+    }
+    .info-section h3 {
+      font-size: 0.95rem;
+      margin: 0.75rem 0 0.4rem;
+      color: #e5e7eb;
+    }
+    .info-section p {
+      margin: 0 0 0.6rem;
+    }
+    .info-section ul {
+      margin: 0.2rem 0 0.6rem 1.1rem;
+      padding: 0;
+    }
+    .info-section li {
+      margin-bottom: 0.25rem;
+    }
+    .info-section a {
+      color: #93c5fd;
+      text-decoration: underline;
+    }
+    .spinner {
+      width: 12px;
+      height: 12px;
+      border-radius: 999px;
+      border: 2px solid rgba(15, 23, 42, 0.85);
+      border-top-color: rgba(15, 23, 42, 0.2);
+      animation: spin 0.7s linear infinite;
+    }
+    .btn-content {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+    }
+    button[disabled] {
+      opacity: 0.7;
+      cursor: default;
+    }
+    @keyframes spin {
+      from { transform: rotate(0deg); }
+      to { transform: rotate(360deg); }
+    }
+    @media (max-width: 600px) {
+      .card {
+        padding: 1.1rem 1rem;
+      }
+      .target-header {
+        flex-direction: column;
+        align-items: flex-start;
+      }
+      .form-row {
+        flex-direction: column;
+        align-items: stretch;
+      }
+    }
+    .recent-section {
+      margin-top: 2.5rem;
+    }
+    .recent-header {
+      font-size: 0.95rem;
+      font-weight: 500;
+      margin-bottom: 0.5rem;
+    }
+    .recent-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 2fr) minmax(0, 1.4fr) minmax(0, 1.4fr);
+      gap: 1.1rem;
+      font-size: 0.8rem;
+    }
+    .recent-card {
+      border-radius: 0.75rem;
+      border: 1px solid rgba(31, 41, 55, 0.95);
+      background: rgba(15, 23, 42, 0.9);
+      padding: 0.75rem 0.85rem;
+    }
+    .recent-title {
+      font-size: 0.8rem;
+      font-weight: 500;
+      margin-bottom: 0.45rem;
+      color: #e5e7eb;
+    }
+    .recent-table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+    .recent-table th,
+    .recent-table td {
+      padding: 0.25rem 0.2rem;
+      text-align: left;
+    }
+    .recent-table th {
+      font-weight: 500;
+      color: #9ca3af;
+      border-bottom: 1px solid rgba(31, 41, 55, 0.9);
+    }
+    .recent-table tr + tr td {
+      border-top: 1px solid rgba(15, 23, 42, 0.9);
+    }
+    .recent-host {
+      font-size: 0.8rem;
+      color: #e5e7eb;
+    }
+    .recent-host a {
+      color: inherit;
+      text-decoration: none;
+    }
+    .recent-host a:hover {
+      text-decoration: underline;
+    }
+    .recent-meta {
+      font-size: 0.7rem;
+      color: #9ca3af;
+      word-break: break-all;
+    }
+    .recent-age {
+      white-space: nowrap;
+    }
+    .recent-status {
+      white-space: nowrap;
+    }
+    @media (max-width: 900px) {
+      .recent-grid {
+        grid-template-columns: minmax(0, 1fr);
+      }
+    }
+    .footer-sep {
+      border: none;
+      border-top: 1px solid rgba(31, 41, 55, 0.9);
+      margin: 2.25rem 0 1.25rem;
+    }
+    .kofi-button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0.45rem 0.9rem;
+      border-radius: 999px;
+      border: 1px solid rgba(148, 163, 184, 0.6);
+      background: linear-gradient(135deg, #1f2937, #111827);
+      color: #e5e7eb;
+      font-size: 0.8rem;
+      text-decoration: none;
+    }
+    .kofi-button:hover {
+      border-color: #38bdf8;
+      background: linear-gradient(135deg, #1d4ed8, #1e293b);
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <div class="brand">
+        <h1>
+          httpver
+          <span class="badge">HTTP/1.x must die</span>
+        </h1>
+        <p class="lead">httpver is quickly checks if a host exposes legacy HTTP/1.x attack surface instead of relying on HTTP/2 or HTTP/3.</p>
+      </div>
+      <div class="header-actions">
+        <button class="menu-toggle" id="menu-toggle" type="button" aria-label="Open navigation menu">
+          <span></span>
+          <span></span>
+          <span></span>
+        </button>
+      </div>
+      <div class="menu-panel" id="menu-panel">
+        <a href="/" class="{{if or (eq .Page "scanner") (eq .Page "")}}nav-active{{end}}">Scanner</a>
+        <a href="/problem" class="{{if eq .Page "problem"}}nav-active{{end}}">The problem</a>
+        <a href="/about" class="{{if eq .Page "about"}}nav-active{{end}}">About</a>
+      </div>
+    </div>
+    <nav class="main-nav">
+      <a href="/" class="{{if or (eq .Page "scanner") (eq .Page "")}}nav-active{{end}}">Scanner</a>
+      <a href="/problem" class="{{if eq .Page "problem"}}nav-active{{end}}">The problem</a>
+      <a href="/about" class="{{if eq .Page "about"}}nav-active{{end}}">About</a>
+    </nav>
+    {{if or (eq .Page "scanner") (eq .Page "")}}
+    <section id="scanner">
+    <div class="card">
+      <form method="GET" action="/">
+        <label for="t">Domain(s)</label>
+        <div class="form-row">
+          <input type="text" id="t" name="t" value="{{.TargetsRaw}}" placeholder="example.com, google.com">
+          <button type="submit" class="primary" id="scan-btn">
+            <span class="btn-content" id="scan-btn-content">
+              <span>Scan</span>
+            </span>
+          </button>
+        </div>
+        <div class="help-text"></div>
+
+        <label class="inline-option">
+          <input type="checkbox" id="hide" name="hide" {{if .HideFromRecent}}checked{{end}}>
+          <span>Do not show these results in the <strong>Recently scanned</strong> overview.</span>
+        </label>
+
+        <div class="actions"></div>
+      </form>
+
+      {{if .Error}}
+      <div class="error">
+        {{.Error}}
+      </div>
+      {{end}}
+    </div>
+
+    {{if .HasResults}}
+    <div class="results">
+      {{if .UsedCache}}
+      <div class="help-text" style="margin-bottom: 0.6rem;">
+        Showing <strong>cached</strong> scan results from {{.CacheAge}}. New scans within the last 4 hours reuse cached data to stay fast.
+      </div>
+      {{end}}
+      {{range .Results}}
+      <div class="target-card">
+        <div class="target-header">
+          <div>
+            <div class="target-main"><a href="{{.URL}}" target="_blank" rel="noreferrer">{{.Target}}</a></div>
+            <div class="target-sub">{{.URL}}</div>
+          </div>
+          <div class="grade-badge grade-{{gradeClass .}}" title="Grade: {{gradeLabel .}}">
+            {{gradeLabel .}} ({{.Score}})
+          </div>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th class="version">Signal</th>
+              <th class="status">Status</th>
+              <th class="detail">Detail</th>
+            </tr>
+          </thead>
+          <tbody>
+            {{range .Results}}
+            <tr>
+              <td class="version">{{.Version}}</td>
+              <td class="status">
+                {{if .Supported}}<span title="supported">✅</span>{{end}}
+              </td>
+              <td class="detail">{{.Detail}}</td>
+            </tr>
+            {{end}}
+            <tr>
+              <td class="version">HTTP/3 via ALPN on 443</td>
+              <td class="status">
+                {{if hasVersion .Results "HTTP/3.0"}}<span class="grade-badge grade-pass">Pass</span>{{else}}<span class="grade-badge grade-fail">Fail</span>{{end}}
+              </td>
+              <td class="detail">Used for grading (A when HTTP/3 is available).</td>
+            </tr>
+            <tr>
+              <td class="version">HTTP/2 via ALPN on 443</td>
+              <td class="status">
+                {{if hasVersion .Results "HTTP/2.0"}}<span class="grade-badge grade-pass">Pass</span>{{else}}<span class="grade-badge grade-fail">Fail</span>{{end}}
+              </td>
+              <td class="detail">Required for grades B/C when HTTP/3 is not available.</td>
+            </tr>
+            <tr>
+              <td class="version">TLS version on HTTP/2</td>
+              <td class="status">
+                {{if .TLSVersion}}{{.TLSVersion}}{{else}}unknown{{end}}
+              </td>
+              <td class="detail">TLS 1.3 → A/B, TLS 1.2 → C, anything else → treated as legacy.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      {{end}}
+    </div>
+    {{end}}
+
+    {{if .Recent}}
+    <div class="recent-section">
+      <div class="recent-header">Recently scanned</div>
+      <div class="recent-grid">
+        <div class="recent-card">
+          <div class="recent-title">Latest</div>
+          <table class="recent-table">
+            <thead>
+              <tr>
+                <th>Host</th>
+                <th>Age</th>
+              </tr>
+            </thead>
+            <tbody>
+              {{range .Recent}}
+              <tr>
+                <td>
+                  <div class="recent-host"><a href="/?t={{.Target}}">{{.Target}}</a></div>
+                  <div class="recent-meta">{{.URL}}</div>
+                </td>
+                <td class="recent-age">{{formatAge .ScannedAt}}</td>
+              </tr>
+              {{end}}
+            </tbody>
+          </table>
+        </div>
+        <div class="recent-card">
+          <div class="recent-title">Best (most modern)</div>
+          <table class="recent-table">
+            <thead>
+              <tr>
+                <th>Host</th>
+                <th class="recent-status">Support</th>
+              </tr>
+            </thead>
+            <tbody>
+              {{range .Best}}
+              <tr>
+                <td>
+                  <div class="recent-host"><a href="/?t={{.Target}}">{{.Target}}</a></div>
+                  <div class="recent-meta">{{.URL}}</div>
+                </td>
+                <td class="recent-status">
+                  <span class="grade-badge {{if eq .Grade "A"}}grade-fantastic{{else if or (eq .Grade "B") (eq .Grade "C")}}grade-pass{{else}}grade-fail{{end}}" title="Grade: {{.Grade}}">
+                    {{.Grade}} ({{.Score}})
+                  </span>
+                </td>
+              </tr>
+              {{end}}
+            </tbody>
+          </table>
+        </div>
+        <div class="recent-card">
+          <div class="recent-title">Worst (least modern)</div>
+          <table class="recent-table">
+            <thead>
+              <tr>
+                <th>Host</th>
+                <th class="recent-status">Support</th>
+              </tr>
+            </thead>
+            <tbody>
+              {{range .Worst}}
+              <tr>
+                <td>
+                  <div class="recent-host"><a href="/?t={{.Target}}">{{.Target}}</a></div>
+                  <div class="recent-meta">{{.URL}}</div>
+                </td>
+                <td class="recent-status">
+                  <span class="grade-badge {{if eq .Grade "A"}}grade-fantastic{{else if or (eq .Grade "B") (eq .Grade "C")}}grade-pass{{else}}grade-fail{{end}}" title="Grade: {{.Grade}}">
+                    {{.Grade}} ({{.Score}})
+                  </span>
+                </td>
+              </tr>
+              {{end}}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+    {{end}}
+    </section>
+    {{end}}
+
+    {{if eq .Page "problem"}}
+    <section id="problem" class="info-section">
+      <h2>The Problem: HTTP/1.x is inhariantly insecure</h2>
+      <p>HTTP/1.0 and HTTP/1.1 are fundamentally broken and insecure by modern standards. They suffer from critical flaws that cannot be fully fixed without replacing the protocol itself.</p>
+      <p>For a detailed technical breakdown of why HTTP/1.x must die, see the excellent site: <a href="https://http1mustdie.com/" target="_blank" rel="noreferrer">https://http1mustdie.com/</a></p>
+      <h3>Recommended practices</h3>
+      <p>We are not asking to kill HTTP/1.x support overnight. Legacy systems exist. Old industrial controllers, embedded devices, ancient monitoring scripts, and unpatchable hardware still speak only HTTP/1.0 or 1.1. These devices must continue to receive a valid response when they connect.</p>
+      <p>What we recommended instead:</p>
+      <ul>
+        <li>HTTP/1.x must be supported only as a compatibility fallback.</li>
+        <li>It must never carry application logic or sensitive data.</li>
+        <li>It must never be possible to force or downgrade a connection to HTTP/1.x when the client and server both support HTTP/2 or HTTP/3.</li>
+      </ul>
+      <p>In practice this means:</p>
+      <ul>
+        <li>Always negotiate the highest protocol version via ALPN (<code>h2</code>, <code>h3</code>). Modern browsers and servers already do this.</li>
+        <li>Respond with HTTP/1.1 only when the client explicitly speaks HTTP/1.x first.</li>
+        <li>Never allow protocol downgrade attacks.</li>
+        <li>Treat any successful downgrade as a configuration failure.</li>
+      </ul>
+      <p>Keeping HTTP/1.x alive for dusty legacy corners is acceptable, but can be disabled if you want to be more strict and your users are not using legacy devices.</p>
+    </section>
+    {{end}}
+
+    {{if eq .Page "about"}}
+    <section id="about" class="info-section">
+      <h2>About</h2>
+      <h3>Is this a replacement for SSL Labs?</h3>
+      <p>No. Run <code>ssllabs.com</code> first and follow its TLS, certificate, and cipher advice. Then use httpver to quickly spot HTTP/1.x-only frontends that are worth modernising or isolating.</p>
+      <h3>Where is the source code?</h3>
+      <p>The CLI and web UI are open source on GitHub: <a href="https://github.com/RuneStone0/httpver" target="_blank" rel="noreferrer">github.com/RuneStone0/httpver</a>.</p>
+      <p>Got feedback? Found a bug? Open an issue or PR on GitHub and help make this scanner better.</p>
+      <h3>How do I run the CLI?</h3>
+      <ul>
+        <li>Scan a public host: <code>httpver example.com</code></li>
+        <li>JSON output: <code>httpver --json example.com</code></li>
+        <li>Multiple hosts: <code>httpver --targets a.com,b.com --json</code></li>
+        <li>Run the web UI locally: <code>httpver --web 8080</code></li>
+      </ul>
+      <h3>Why is the CLI handy?</h3>
+      <p>You can point it at internal hostnames or IPs from a jump box or laptop on your VPN, so you can grade services that aren&apos;t exposed to the public internet.</p>
+      <h3>Tip a coffee?</h3>
+      <p>If this tool helped you deprecate some crusty HTTP/1.x edge boxes, consider buying the author a coffee or starring the project on GitHub.</p>
+    </section>
+    {{end}}
+
+    <hr class="footer-sep" />
+    <div class="footer">
+      <div>
+        <span>This service is inspired in part by the HTTP/1.1 security concerns documented at <a href="https://http1mustdie.com/" target="_blank" rel="noreferrer">http1mustdie.com</a>. It is designed as a lightweight <strong>addition</strong> to <code>ssllabs.com</code>: run SSL Labs and follow its TLS/certificate/cipher recommendations, then use <code>httpver</code> to quickly spot legacy HTTP/1.x-only surfaces that are still missing HTTP/2 or HTTP/3.</span>
+      </div>
+      <div style="margin-top: 0.6rem;">
+        <span>CLI usage: <code>httpver cloudflare.com</code>, <code>httpver --json example.org</code>. Web mode: <code>httpver --web 8080</code>.</span>
+      </div>
+      <div style="margin-top: 0.9rem; display: flex; justify-content: center; gap: 0.75rem;">
+        <a class="icon-link" href="https://github.com/RuneStone0/httpver" target="_blank" rel="noreferrer" aria-label="View httpver on GitHub">
+          <svg viewBox="0 0 16 16" aria-hidden="true">
+            <path fill-rule="evenodd" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"></path>
+          </svg>
+        </a>
+        <a class="kofi-button" href="https://ko-fi.com/Y8Y61P5UQ2" target="_blank" rel="noreferrer">Buy me a coffee</a>
+      </div>
+    </div>
+  </div>
+  <script>
+    (function () {
+      var form = document.querySelector('form');
+      if (!form) return;
+      var btn = document.getElementById('scan-btn');
+      var content = document.getElementById('scan-btn-content');
+      if (!btn || !content) return;
+
+      form.addEventListener('submit', function () {
+        // If no targets provided, let the server respond normally without spinner state.
+        var input = document.getElementById('t');
+        if (input && !input.value.trim()) {
+          return;
+        }
+        btn.disabled = true;
+        content.innerHTML = '';
+        var spinner = document.createElement('span');
+        spinner.className = 'spinner';
+        var text = document.createElement('span');
+        text.textContent = 'Scanning...';
+        var wrap = document.createElement('span');
+        wrap.className = 'btn-content';
+        wrap.appendChild(spinner);
+        wrap.appendChild(text);
+        content.appendChild(wrap);
+      });
+
+      var menuToggle = document.getElementById('menu-toggle');
+      var menuPanel = document.getElementById('menu-panel');
+      if (menuToggle && menuPanel) {
+        menuToggle.addEventListener('click', function () {
+          var isOpen = menuPanel.classList.toggle('open');
+          menuToggle.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
+          if (isOpen) {
+            menuToggle.classList.add('open');
+          } else {
+            menuToggle.classList.remove('open');
+          }
+        });
+        menuPanel.addEventListener('click', function (e) {
+          if (e.target.tagName === 'A') {
+            menuPanel.classList.remove('open');
+            menuToggle.setAttribute('aria-expanded', 'false');
+            menuToggle.classList.remove('open');
+          }
+        });
+      }
+    })();
+  </script>
+</body>
+</html>
+
+

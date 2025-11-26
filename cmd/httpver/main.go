@@ -14,6 +14,30 @@ import (
 	"check_http_versions/internal/httpver"
 )
 
+func printUsage() {
+	fmt.Println("httpver - HTTP version and minimal ALPN-based grading tool")
+	fmt.Println()
+	fmt.Println("Usage:")
+	fmt.Println("  httpver [-port N] [--json] [--targets a.com,b.com] [--targets-file file] <domain-or-url> ...")
+	fmt.Println("  httpver --web 8080")
+	fmt.Println()
+	fmt.Println("Options:")
+	fmt.Println("  -port N            Port to test (default 443 for https, 80 for http)")
+	fmt.Println("  --json             Output results as JSON")
+	fmt.Println("  --targets LIST     Comma-separated list of targets (e.g. \"a.com,b.com\")")
+	fmt.Println("  --targets-file F   File with one target per line")
+	fmt.Println("  --web PORT         Run the web UI on the given port (e.g. 8080)")
+	fmt.Println("  --help             Show this help message and exit")
+	fmt.Println()
+	fmt.Println("Examples:")
+	fmt.Println("  httpver cloudflare.com")
+	fmt.Println("  httpver --json example.org")
+	fmt.Println("  httpver --targets cloudflare.com,example.com --json")
+	fmt.Println("  httpver --targets-file targets.txt --json")
+	fmt.Println("  httpver cloudflare.com google.com floqast.app neverssl.com")
+	fmt.Println("  httpver --web 8080")
+}
+
 func gatherTargets(targetsFlag, targetsFile string, positional []string) ([]string, error) {
 	var targets []string
 
@@ -65,13 +89,19 @@ func main() {
 	jsonFlag := flag.Bool("json", false, "output results as JSON")
 	targetsFlag := flag.String("targets", "", "comma-separated list of targets (e.g. \"a.com,b.com\")")
 	targetsFile := flag.String("targets-file", "", "path to file containing targets (one per line)")
-
-	webFlag := flag.Bool("web", false, "run in web server mode")
-	listenAddr := flag.String("listen", ":8080", "address to listen on in web mode (e.g. \":8080\")")
+	helpFlag := flag.Bool("help", false, "show help and usage information")
+	webPort := flag.Int("web", 0, "run in web server mode on the given port (e.g. 8080)")
 	flag.Parse()
 
-	if *webFlag {
-		if err := runWebServer(*listenAddr); err != nil {
+	if *helpFlag {
+		printUsage()
+		return
+	}
+
+	// Web mode: httpver --web 8080
+	if *webPort > 0 {
+		addr := ":" + strconv.Itoa(*webPort)
+		if err := runWebServer(addr); err != nil {
 			fmt.Fprintf(os.Stderr, "web server error: %v\n", err)
 			os.Exit(1)
 		}
@@ -82,18 +112,13 @@ func main() {
 
 	targets, err := gatherTargets(*targetsFlag, *targetsFile, positional)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		fmt.Fprintf(os.Stderr, "error: %v\n\n", err)
+		printUsage()
 		os.Exit(1)
 	}
 
 	if len(targets) == 0 {
-		fmt.Println("Usage: httpver [-port N] [--json] [--targets a.com,b.com] [--targets-file file] <domain-or-url> ...")
-		fmt.Println("       httpver --web [--listen :8080]")
-		fmt.Println("Example: httpver cloudflare.com")
-		fmt.Println("Example: httpver -port 8080 localhost")
-		fmt.Println("Example: httpver --json cloudflare.com example.org")
-		fmt.Println("Example: httpver --targets cloudflare.com,example.com --json")
-		fmt.Println("Example: httpver --targets-file targets.txt --json")
+		printUsage()
 		os.Exit(1)
 	}
 
